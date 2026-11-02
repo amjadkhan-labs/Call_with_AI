@@ -1,6 +1,48 @@
 import cv2
 import time
+import requests
+import threading
 import numpy as np
+
+
+
+# FastAPI endpoint URL from backend.py
+API_URL = "http://127.0.0.1:8000/predict"
+
+# Global variables to store the latest caption and prevent overlapping API calls
+latest_caption = "Waiting for first steady scene..."
+is_sending = False
+
+
+def send_to_backend(jpeg_bytes, scene_number):
+    """Sends the captured JPEG bytes to backend.py in a background thread."""
+    global latest_caption, is_sending
+    is_sending = True
+    try:
+        # Pack jpeg_bytes into a multipart/form-data file payload matching UploadFile in backend.py
+        files = {"file": (f"scene_{scene_number}.jpg", jpeg_bytes, "image/jpeg")}
+        response = requests.post(API_URL, files=files, timeout=15)
+
+        if response.status_code == 200:
+            result = response.json()
+            caption_text = result.get("caption", "")
+            latency = result.get("inference_time_ms", 0)
+            latest_caption = f"{caption_text} ({latency} ms)"
+            print(f"[BACKEND CAPTION #{scene_number}] \"{caption_text}\" | Inference: {latency} ms")
+        else:
+            latest_caption = f"Server Error: {response.status_code}"
+            print(f"[ERROR] Backend returned {response.status_code}: {response.text}")
+
+    except requests.exceptions.ConnectionError:
+        latest_caption = "Backend Offline! Run: uvicorn backend:app --reload"
+        print("[ERROR] Cannot connect to backend.py. Is uvicorn running on port 8000?")
+    except Exception as e:
+        latest_caption = "Request Failed"
+        print(f"[ERROR] Failed to send image: {e}")
+    finally:
+        is_sending = False
+
+
 
 
 def preprocess_for_gatekeeper(frame, size=(64, 64)):
