@@ -29,6 +29,9 @@ def health_check():
     """Simple check to verify the server is running."""
     return {"status": "online", "model_loaded": Transformer_Model is not None}
 
+@app.get("/")
+def welcome():
+    return "Hello yor are on right track:)"
 
 @app.post("/predict")
 async def predict_caption(file: UploadFile = File(...)):

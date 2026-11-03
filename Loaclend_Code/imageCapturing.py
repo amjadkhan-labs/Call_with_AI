@@ -1,48 +1,159 @@
+# import cv2
+# import time
+# import numpy as np
+
+
+
+
+# def preprocess_for_gatekeeper(frame, size=(64, 64)):
+#     """
+#     Lightweight 64x64 grayscale thumbnail used for:
+#     1. Fast motion check (prev_gray)
+#     2. Slow camera drift check (anchor_gray)
+#     3. New scene check vs the 1 last sent frame (last_sent_gray)
+#     """
+#     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+#     small_gray = cv2.resize(gray, size, interpolation=cv2.INTER_AREA)
+#     blurred_gray = cv2.GaussianBlur(small_gray, (5, 5), 0)
+#     return blurred_gray
+
+
+# def preprocess_for_model(frame, target_size=(224, 224), jpeg_quality=85):
+#     """
+#     Executed ONLY when a new scene is focused for >= 1.0 second.
+#     Prepares the single image for our Deep Learning model.
+#     """
+#     resized_bgr = cv2.resize(frame, target_size, interpolation=cv2.INTER_AREA)
+#     rgb_image = cv2.cvtColor(resized_bgr, cv2.COLOR_BGR2RGB)
+
+#     encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality]
+#     success, encoded_jpeg = cv2.imencode('.jpg', resized_bgr, encode_param)
+#     jpeg_bytes = encoded_jpeg.tobytes() if success else None
+
+#     return rgb_image, jpeg_bytes
+
+
+# def run_edge_gatekeeper(
+#     source=0,
+#     scene_threshold=12.0,       # How different current view must be from the 1 last sent photo
+#     motion_threshold=2.5,       # Catches fast hand movement between adjacent frames
+#     anchor_threshold=4.5,       # Catches slow camera panning away from focus start point
+#     focus_time_required=1.0     # Must hold steady on scene for 1.0 full second
+# ):
+#     cap = cv2.VideoCapture(source)
+
+#     if not cap.isOpened():
+#         print(f"[ERROR] Could not open camera source: {source}")
+#         return
+
+#     prev_gray = None           # last fram
+#     anchor_gray = None         # 
+#     last_sent_gray = None      # last sent gray image
+#     focus_start_time = None    # focus time
+#     scenes_sent_count = 0      # how many image sent yet
+
+#     print("[INFO] Clean Edge Gatekeeper started. Press 'q' to quit.")
+
+#     while True:
+#         ret, frame = cap.read()
+#         if not ret or frame is None:
+#             print("[WARNING] Dropped frame from stream, retrying...")
+#             time.sleep(0.05)
+#             continue
+        
+#         frame = cv2.flip(frame, 1)
+
+#         now = time.monotonic()
+#         current_gray = preprocess_for_gatekeeper(frame)
+
+#         # Initialize on the very first frame
+#         if prev_gray is None or anchor_gray is None:
+#             prev_gray = current_gray
+#             anchor_gray = current_gray
+#             focus_start_time = now
+#             continue
+
+#         # Step 1: Detect Fast Motion (vs prev_gray) AND Slow Movement (vs anchor_gray)
+#         instant_diff = np.mean(cv2.absdiff(current_gray, prev_gray))
+#         anchor_drift = np.mean(cv2.absdiff(current_gray, anchor_gray))
+#         prev_gray = current_gray
+
+#         if instant_diff > motion_threshold or anchor_drift > anchor_threshold:
+#             # Camera is moving (fast or slow) -> Reset anchor and restart 1.0s timer
+#             anchor_gray = current_gray
+#             focus_start_time = now
+#             focus_duration = 0.0
+#         else:
+#             # Camera is holding still -> count up time in seconds
+#             focus_duration = now - focus_start_time
+
+#         is_camera_steady = focus_duration >= focus_time_required
+
+#         # Step 2: Simple Scene Check (Compare ONLY against the 1 last sent frame)
+#         if last_sent_gray is None:
+#             scene_diff = 999.0  # First capture ever
+#         else:
+#             scene_diff = np.mean(cv2.absdiff(current_gray, last_sent_gray))
+
+#         is_new_scene = scene_diff > scene_threshold
+
+#         # Step 3: Gatekeeper Decision
+#         status_text = "Holding on Current Scene (Already Captured)"
+#         status_color = (0, 255, 0)  # Green
+
+#         if is_new_scene and not is_camera_steady:
+#             status_text = f"Focusing on New Scene... {focus_duration:.1f}s / {focus_time_required:.1f}s"
+#             status_color = (0, 165, 255)  # Orange
+
+#         elif is_new_scene and is_camera_steady:
+#             # TRIGGER! Focused >= 1.0s on a new scene -> Send 1 image
+#             rgb_img, jpeg_bytes = preprocess_for_model(frame)
+
+#             last_sent_gray = current_gray
+#             anchor_gray = current_gray
+#             focus_start_time = now
+#             scenes_sent_count += 1
+
+#             payload_kb = len(jpeg_bytes) / 1024 if jpeg_bytes else 0
+#             print(
+#                 f"[SCENE #{scenes_sent_count} SENT] "
+#                 f"Held: {focus_duration:.2f}s | Scene Diff: {scene_diff:.1f} | "
+#                 f"Drift: {anchor_drift:.2f} | Payload: {payload_kb:.1f} KB"
+#             )
+#             status_text = f"CAPTURED SCENE #{scenes_sent_count}!"
+#             status_color = (0, 0, 255)  # Red
+
+#         # Step 4: Live HUD
+#         display_frame = frame.copy()
+#         cv2.putText(display_frame, f"Status: {status_text}", (15, 30),
+#                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
+#         cv2.putText(display_frame, f"Focus Timer: {min(focus_duration, focus_time_required):.2f}s / {focus_time_required:.1f}s", (15, 60),
+#                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+#         cv2.putText(display_frame, f"Scene Diff: {scene_diff:.1f} (Need > {scene_threshold})", (15, 85),
+#                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+#         cv2.putText(display_frame, f"Instant Diff: {instant_diff:.2f} | Slow Drift: {anchor_drift:.2f} (Max {anchor_threshold})", (15, 110),
+#                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+#         cv2.putText(display_frame, f"Total Images Sent: {scenes_sent_count}", (15, 140),
+#                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+
+#         cv2.imshow("LiveSight - Clean Edge Gatekeeper", display_frame)
+
+#         if cv2.waitKey(1) & 0xFF == ord('q'):
+#             break
+
+#     cap.release()
+#     cv2.destroyAllWindows()
+
+
+# if __name__ == "__main__":
+#     run_edge_gatekeeper(source=0)
+
+
+
+
 import cv2
 import time
-import requests
-import threading
 import numpy as np
-
-
-
-# FastAPI endpoint URL from backend.py
-API_URL = "http://127.0.0.1:8000/predict"
-
-# Global variables to store the latest caption and prevent overlapping API calls
-latest_caption = "Waiting for first steady scene..."
-is_sending = False
-
-
-def send_to_backend(jpeg_bytes, scene_number):
-    """Sends the captured JPEG bytes to backend.py in a background thread."""
-    global latest_caption, is_sending
-    is_sending = True
-    try:
-        # Pack jpeg_bytes into a multipart/form-data file payload matching UploadFile in backend.py
-        files = {"file": (f"scene_{scene_number}.jpg", jpeg_bytes, "image/jpeg")}
-        response = requests.post(API_URL, files=files, timeout=15)
-
-        if response.status_code == 200:
-            result = response.json()
-            caption_text = result.get("caption", "")
-            latency = result.get("inference_time_ms", 0)
-            latest_caption = f"{caption_text} ({latency} ms)"
-            print(f"[BACKEND CAPTION #{scene_number}] \"{caption_text}\" | Inference: {latency} ms")
-        else:
-            latest_caption = f"Server Error: {response.status_code}"
-            print(f"[ERROR] Backend returned {response.status_code}: {response.text}")
-
-    except requests.exceptions.ConnectionError:
-        latest_caption = "Backend Offline! Run: uvicorn backend:app --reload"
-        print("[ERROR] Cannot connect to backend.py. Is uvicorn running on port 8000?")
-    except Exception as e:
-        latest_caption = "Request Failed"
-        print(f"[ERROR] Failed to send image: {e}")
-    finally:
-        is_sending = False
-
-
 
 
 def preprocess_for_gatekeeper(frame, size=(64, 64)):
@@ -73,27 +184,141 @@ def preprocess_for_model(frame, target_size=(224, 224), jpeg_quality=85):
     return rgb_image, jpeg_bytes
 
 
+class EdgeGatekeeper:
+    """Stateful gatekeeper that processes one frame at a time for Streamlit."""
+    def __init__(
+        self,
+        scene_threshold=12.0,
+        motion_threshold=2.5,
+        anchor_threshold=4.5,
+        focus_time_required=1.0
+    ):
+        self.scene_threshold = scene_threshold
+        self.motion_threshold = motion_threshold
+        self.anchor_threshold = anchor_threshold
+        self.focus_time_required = focus_time_required
+
+        self.prev_gray = None
+        self.anchor_gray = None
+        self.last_sent_gray = None
+        self.focus_start_time = None
+        self.scenes_sent_count = 0
+
+    def process_frame(self, frame):
+        """
+        Processes a single BGR frame and draws the HUD.
+        Returns:
+            display_bgr (np.ndarray): Annotated BGR frame
+            triggered (bool): True when a new scene is held for >= focus_time_required
+            payload (dict or None): Contains 'rgb_image', 'jpeg_bytes', and capture stats
+        """
+        frame = cv2.flip(frame, 1)
+        now = time.monotonic()
+        current_gray = preprocess_for_gatekeeper(frame)
+
+        # Initialize on the very first frame
+        if self.prev_gray is None or self.anchor_gray is None:
+            self.prev_gray = current_gray
+            self.anchor_gray = current_gray
+            self.focus_start_time = now
+            return frame, False, None
+
+        # Step 1: Detect Fast Motion (vs prev_gray) AND Slow Movement (vs anchor_gray)
+        instant_diff = float(np.mean(cv2.absdiff(current_gray, self.prev_gray)))
+        anchor_drift = float(np.mean(cv2.absdiff(current_gray, self.anchor_gray)))
+        self.prev_gray = current_gray
+
+        if instant_diff > self.motion_threshold or anchor_drift > self.anchor_threshold:
+            self.anchor_gray = current_gray
+            self.focus_start_time = now
+            focus_duration = 0.0
+        else:
+            focus_duration = now - self.focus_start_time
+
+        is_camera_steady = focus_duration >= self.focus_time_required
+
+        # Step 2: Simple Scene Check (Compare ONLY against the 1 last sent frame)
+        if self.last_sent_gray is None:
+            scene_diff = 999.0
+        else:
+            scene_diff = float(np.mean(cv2.absdiff(current_gray, self.last_sent_gray)))
+
+        is_new_scene = scene_diff > self.scene_threshold
+
+        # Step 3: Gatekeeper Decision
+        status_text = "Holding on Current Scene (Already Captured)"
+        status_color = (0, 255, 0)
+        triggered = False
+        payload = None
+
+        if is_new_scene and not is_camera_steady:
+            status_text = f"Focusing on New Scene... {focus_duration:.1f}s / {self.focus_time_required:.1f}s"
+            status_color = (0, 165, 255)
+
+        elif is_new_scene and is_camera_steady:
+            rgb_img, jpeg_bytes = preprocess_for_model(frame)
+
+            self.last_sent_gray = current_gray
+            self.anchor_gray = current_gray
+            self.focus_start_time = now
+            self.scenes_sent_count += 1
+            triggered = True
+
+            payload_kb = len(jpeg_bytes) / 1024 if jpeg_bytes else 0
+            payload = {
+                "scene_id": self.scenes_sent_count,
+                "rgb_image": rgb_img,
+                "jpeg_bytes": jpeg_bytes,
+                "focus_duration": focus_duration,
+                "scene_diff": scene_diff,
+                "anchor_drift": anchor_drift,
+                "payload_kb": payload_kb
+            }
+
+            print(
+                f"[SCENE #{self.scenes_sent_count} SENT] "
+                f"Held: {focus_duration:.2f}s | Scene Diff: {scene_diff:.1f} | "
+                f"Drift: {anchor_drift:.2f} | Payload: {payload_kb:.1f} KB"
+            )
+            status_text = f"CAPTURED SCENE #{self.scenes_sent_count}!"
+            status_color = (0, 0, 255)
+
+        # Step 4: Live HUD
+        display_frame = frame.copy()
+        cv2.putText(display_frame, f"Status: {status_text}", (15, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
+        cv2.putText(display_frame, f"Focus Timer: {min(focus_duration, self.focus_time_required):.2f}s / {self.focus_time_required:.1f}s", (15, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+        cv2.putText(display_frame, f"Scene Diff: {scene_diff:.1f} (Need > {self.scene_threshold})", (15, 85),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+        cv2.putText(display_frame, f"Instant Diff: {instant_diff:.2f} | Slow Drift: {anchor_drift:.2f} (Max {self.anchor_threshold})", (15, 110),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+        cv2.putText(display_frame, f"Total Images Sent: {self.scenes_sent_count}", (15, 140),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+
+        return display_frame, triggered, payload
+
+
 def run_edge_gatekeeper(
     source=0,
-    scene_threshold=12.0,       # How different current view must be from the 1 last sent photo
-    motion_threshold=2.5,       # Catches fast hand movement between adjacent frames
-    anchor_threshold=4.5,       # Catches slow camera panning away from focus start point
-    focus_time_required=1.0     # Must hold steady on scene for 1.0 full second
+    scene_threshold=12.0,
+    motion_threshold=2.5,
+    anchor_threshold=4.5,
+    focus_time_required=1.0
 ):
     cap = cv2.VideoCapture(source)
-
     if not cap.isOpened():
         print(f"[ERROR] Could not open camera source: {source}")
         return
 
-    prev_gray = None           # last fram
-    anchor_gray = None         # 
-    last_sent_gray = None      # last sent gray image
-    focus_start_time = None    # focus time
-    scenes_sent_count = 0      # how many image sent yet
+    gatekeeper = EdgeGatekeeper(
+        scene_threshold=scene_threshold,
+        motion_threshold=motion_threshold,
+        anchor_threshold=anchor_threshold,
+        focus_time_required=focus_time_required
+    )
 
     print("[INFO] Clean Edge Gatekeeper started. Press 'q' to quit.")
-
     while True:
         ret, frame = cap.read()
         if not ret or frame is None:
@@ -101,79 +326,7 @@ def run_edge_gatekeeper(
             time.sleep(0.05)
             continue
 
-        now = time.monotonic()
-        current_gray = preprocess_for_gatekeeper(frame)
-
-        # Initialize on the very first frame
-        if prev_gray is None or anchor_gray is None:
-            prev_gray = current_gray
-            anchor_gray = current_gray
-            focus_start_time = now
-            continue
-
-        # Step 1: Detect Fast Motion (vs prev_gray) AND Slow Movement (vs anchor_gray)
-        instant_diff = np.mean(cv2.absdiff(current_gray, prev_gray))
-        anchor_drift = np.mean(cv2.absdiff(current_gray, anchor_gray))
-        prev_gray = current_gray
-
-        if instant_diff > motion_threshold or anchor_drift > anchor_threshold:
-            # Camera is moving (fast or slow) -> Reset anchor and restart 1.0s timer
-            anchor_gray = current_gray
-            focus_start_time = now
-            focus_duration = 0.0
-        else:
-            # Camera is holding still -> count up time in seconds
-            focus_duration = now - focus_start_time
-
-        is_camera_steady = focus_duration >= focus_time_required
-
-        # Step 2: Simple Scene Check (Compare ONLY against the 1 last sent frame)
-        if last_sent_gray is None:
-            scene_diff = 999.0  # First capture ever
-        else:
-            scene_diff = np.mean(cv2.absdiff(current_gray, last_sent_gray))
-
-        is_new_scene = scene_diff > scene_threshold
-
-        # Step 3: Gatekeeper Decision
-        status_text = "Holding on Current Scene (Already Captured)"
-        status_color = (0, 255, 0)  # Green
-
-        if is_new_scene and not is_camera_steady:
-            status_text = f"Focusing on New Scene... {focus_duration:.1f}s / {focus_time_required:.1f}s"
-            status_color = (0, 165, 255)  # Orange
-
-        elif is_new_scene and is_camera_steady:
-            # TRIGGER! Focused >= 1.0s on a new scene -> Send 1 image
-            rgb_img, jpeg_bytes = preprocess_for_model(frame)
-
-            last_sent_gray = current_gray
-            anchor_gray = current_gray
-            focus_start_time = now
-            scenes_sent_count += 1
-
-            payload_kb = len(jpeg_bytes) / 1024 if jpeg_bytes else 0
-            print(
-                f"[SCENE #{scenes_sent_count} SENT] "
-                f"Held: {focus_duration:.2f}s | Scene Diff: {scene_diff:.1f} | "
-                f"Drift: {anchor_drift:.2f} | Payload: {payload_kb:.1f} KB"
-            )
-            status_text = f"CAPTURED SCENE #{scenes_sent_count}!"
-            status_color = (0, 0, 255)  # Red
-
-        # Step 4: Live HUD
-        display_frame = frame.copy()
-        cv2.putText(display_frame, f"Status: {status_text}", (15, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
-        cv2.putText(display_frame, f"Focus Timer: {min(focus_duration, focus_time_required):.2f}s / {focus_time_required:.1f}s", (15, 60),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-        cv2.putText(display_frame, f"Scene Diff: {scene_diff:.1f} (Need > {scene_threshold})", (15, 85),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-        cv2.putText(display_frame, f"Instant Diff: {instant_diff:.2f} | Slow Drift: {anchor_drift:.2f} (Max {anchor_threshold})", (15, 110),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-        cv2.putText(display_frame, f"Total Images Sent: {scenes_sent_count}", (15, 140),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-
+        display_frame, _, _ = gatekeeper.process_frame(frame)
         cv2.imshow("LiveSight - Clean Edge Gatekeeper", display_frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
