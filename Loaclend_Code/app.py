@@ -16,7 +16,7 @@ if "caption_history" not in st.session_state:
 # Sidebar: Backend URL, Health Check, and Gatekeeper Thresholds
 with st.sidebar:
     st.header("FastAPI Backend")
-    api_base_url = st.text_input("Backend Base URL", value="http://127.0.0.1:8001").rstrip("/")
+    api_base_url = st.text_input("Backend Base URL", value="https://call-with-ai-backend.onrender.com")
     predict_url = f"{api_base_url}/predict"
     health_url = f"{api_base_url}/health"
 
@@ -59,7 +59,7 @@ def send_frame_to_fastapi(jpeg_bytes, scene_id, url, result_queue):
     """Posts jpeg_bytes to FastAPI /predict in a background thread."""
     try:
         files = {"file": (f"scene_{scene_id}.jpg", jpeg_bytes, "image/jpeg")}
-        response = requests.post(url, files=files, timeout=15)
+        response = requests.post(url, files=files, timeout=60)
 
         if response.status_code == 200:
             data = response.json()
